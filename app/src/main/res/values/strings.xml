@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Viora</string>
+    <string name="accessibility_service_description">Reads visible text from the active app for Viora perception.</string>
+</resources>
