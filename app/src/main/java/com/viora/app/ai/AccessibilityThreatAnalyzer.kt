@@ -1,5 +1,6 @@
 package com.viora.app.ai
 
+import com.viora.app.domain.model.VioraContext
 import com.viora.app.domain.perception.AccessibilitySnapshot
 import com.viora.app.domain.threat.RiskLevel
 import com.viora.app.domain.threat.ThreatAssessment
@@ -8,10 +9,18 @@ import com.viora.app.domain.threat.ThreatSignal
 /**
  * Small, deterministic classifier for text collected by AccessibilityService.
  *
- * This is deliberately separate from [ThreatEngine] so it can later be replaced
- * by a model without changing the existing payment analysis contract.
+ * Implements [GuardianAI] so it shares one contract with [ThreatEngine] for future
+ * composition (e.g. a CompositeGuardianAI). The [analyze] overload from that
+ * interface reads its text from [VioraContext.extractedText]; the [analyze]
+ * overloads taking an [AccessibilitySnapshot] or raw [String] remain for existing
+ * callers (e.g. the accessibility service) and are unchanged.
  */
-class AccessibilityThreatAnalyzer {
+class AccessibilityThreatAnalyzer : GuardianAI {
+
+    override suspend fun analyze(
+        context: VioraContext,
+        assessment: ThreatAssessment
+    ): ThreatAssessment = analyze(context.extractedText.orEmpty())
 
     fun analyze(snapshot: AccessibilitySnapshot): ThreatAssessment =
         analyze(snapshot.visibleText)
