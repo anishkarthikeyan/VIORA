@@ -13,3 +13,10 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Kotlin compiler/build daemon cache (local, machine-specific)
+.kotlin/
+
+# Local AI-assistant/IDE-plugin planning scratch (session-local, can contain
+# another developer's local machine paths — never intended to be shared)
+.artifacts/
