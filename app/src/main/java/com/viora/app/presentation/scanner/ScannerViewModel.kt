@@ -6,6 +6,8 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.viora.app.core.ocr.SharedImageProcessor
+import com.viora.app.ai.AccessibilityThreatAnalyzer
+import com.viora.app.ai.CompositeGuardianAI
 import com.viora.app.ai.GuardianAI
 import com.viora.app.ai.ThreatEngine
 import com.viora.app.domain.model.InputType
@@ -62,7 +64,7 @@ data class ScannerUiState(
  * The risk overlay reacts to real payloads instead of mock levels.
  */
 class ScannerViewModel(
-    private val guardianAI: GuardianAI = ThreatEngine(),
+    private val guardianAI: GuardianAI = CompositeGuardianAI(ThreatEngine(), AccessibilityThreatAnalyzer()),
     private val upiParser: UpiParser = UpiParser(),
     private val fusionEngine: ContextFusionEngine = ContextFusionEngine(),
     private val shareProcessor: ShareInputProcessor = ShareInputProcessor(upiParser),

@@ -8,16 +8,23 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.viora.app.BuildConfig
 import com.viora.app.ai.AccessibilityThreatAnalyzer
+import com.viora.app.ai.CompositeGuardianAI
+import com.viora.app.ai.GuardianAI
+import com.viora.app.ai.ThreatEngine
 import com.viora.app.core.overlay.VioraOverlayService
 import com.viora.app.core.overlay.VioraRiskLevel
 import com.viora.app.core.overlay.VioraWarning
+import com.viora.app.domain.model.InputType
+import com.viora.app.domain.model.VioraContext
 import com.viora.app.domain.perception.AccessibilitySnapshot
 import com.viora.app.domain.threat.RiskLevel
+import com.viora.app.domain.threat.ThreatAssessment
+import kotlinx.coroutines.runBlocking
 
 /** Collects structured text from the active accessibility tree for the perception layer. */
 class VioraAccessibilityService : AccessibilityService() {
 
-    private val analyzer = AccessibilityThreatAnalyzer()
+    private val guardianAI: GuardianAI = CompositeGuardianAI(ThreatEngine(), AccessibilityThreatAnalyzer())
     private val handler = Handler(Looper.getMainLooper())
     private var lastSnapshotPackage: String? = null
     private var lastSnapshotHash: Int? = null
@@ -65,7 +72,15 @@ class VioraAccessibilityService : AccessibilityService() {
     private fun analyzePendingSnapshot() {
         val snapshot = pendingSnapshot ?: return
         pendingSnapshot = null
-        val assessment = analyzer.analyze(snapshot)
+        val context = VioraContext(
+            inputType = InputType.TEXT,
+            rawContent = snapshot.visibleText,
+            extractedText = snapshot.visibleText
+        )
+        // GuardianAI.analyze is suspend, but every current engine is synchronous
+        // (regex/arithmetic only, no real suspension point), so this call returns
+        // immediately without blocking the handler thread.
+        val assessment = runBlocking { guardianAI.analyze(context, ThreatAssessment.neutral()) }
         val confidence = confidenceFor(assessment)
         if (BuildConfig.DEBUG) {
             Log.d(
