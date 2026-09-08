@@ -64,7 +64,7 @@ fun VioraRiskOverlay(
     ) {
         assessment?.let { data ->
             val riskColor = data.riskLevel.color()
-            val title = data.riskLevel.overlayTitle()
+            val title = data.riskLevel.headline().uppercase()
 
             Column(
                 modifier = Modifier
@@ -172,16 +172,3 @@ fun VioraRiskOverlay(
     }
 }
 
-private fun RiskLevel.color(): Color = when (this) {
-    RiskLevel.SAFE -> RiskSafeColor
-    RiskLevel.VERIFY -> RiskVerifyColor
-    RiskLevel.SUSPICIOUS -> RiskSuspiciousColor
-    RiskLevel.DANGEROUS -> RiskDangerousColor
-}
-
-private fun RiskLevel.overlayTitle(): String = when (this) {
-    RiskLevel.SAFE -> "NO ISSUES DETECTED"
-    RiskLevel.VERIFY -> "VERIFY BEFORE PAYING"
-    RiskLevel.SUSPICIOUS -> "SUSPICIOUS PAYMENT"
-    RiskLevel.DANGEROUS -> "HIGH RISK — DO NOT PAY"
-}

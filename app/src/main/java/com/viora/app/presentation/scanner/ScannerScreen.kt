@@ -16,8 +16,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -38,10 +36,13 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.viora.app.presentation.components.PrimaryActionButton
 import com.viora.app.presentation.components.VioraDarkBackground
-import com.viora.app.presentation.components.VioraDarkSurface
+import com.viora.app.presentation.components.VioraDebugPanel
 import com.viora.app.presentation.components.VioraPrimaryCyan
+import com.viora.app.presentation.components.VioraRadius
 import com.viora.app.presentation.components.VioraRiskOverlay
+import com.viora.app.presentation.components.VioraSpacing
 import com.viora.app.presentation.scanner.components.VioraCameraPreview
 
 @Composable
@@ -106,18 +107,23 @@ fun ScannerScreen(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 40.dp, start = 24.dp, end = 24.dp)
+                    .padding(top = 40.dp, start = VioraSpacing.xl, end = VioraSpacing.xl)
             ) {
                 Text(
                     text = "VIORA SCANNER",
                     color = VioraPrimaryCyan,
-                    fontSize = 20.sp,
+                    fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.sp
                 )
+                Text(
+                    text = "Point at a QR code or payment link to check it",
+                    color = Color.White.copy(alpha = 0.85f),
+                    fontSize = 13.sp
+                )
 
                 uiState.qrDetection?.let { detection ->
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(VioraSpacing.md))
                     QrDetectedDevBanner(detection = detection)
                 }
             }
@@ -155,19 +161,13 @@ fun ScannerScreen(
                     onDismissClick = viewModel::dismissOverlay
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(VioraSpacing.sm))
 
-                Button(
+                PrimaryActionButton(
+                    text = "View Detailed Analysis",
                     onClick = onViewResultClick,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                        .height(50.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = VioraPrimaryCyan, contentColor = Color.Black),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Text(text = "View Detailed Analysis", fontWeight = FontWeight.Bold)
-                }
+                    modifier = Modifier.padding(horizontal = VioraSpacing.lg)
+                )
             }
         }
     }
@@ -176,29 +176,22 @@ fun ScannerScreen(
 /** Development-only panel showing the latest throttled OCR extraction. */
 @Composable
 private fun OcrDebugPanel(ocrResult: com.viora.app.domain.model.OcrResult) {
-    Surface(
-        color = Color(0xFF151A23).copy(alpha = 0.85f),
-        shape = RoundedCornerShape(10.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurfaceVariant),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(modifier = Modifier.padding(10.dp)) {
-            Text(
-                text = "OCR DEBUG (${ocrResult.lineCount} lines)",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                letterSpacing = 1.sp
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = ocrResult.rawText,
-                color = Color.White,
-                fontSize = 12.sp,
-                maxLines = 4,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-            )
-        }
+    VioraDebugPanel {
+        Text(
+            text = "OCR DEBUG (${ocrResult.lineCount} lines)",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 1.sp
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = ocrResult.rawText,
+            color = Color.White,
+            fontSize = 12.sp,
+            maxLines = 4,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+        )
     }
 }
 
@@ -207,11 +200,11 @@ private fun OcrDebugPanel(ocrResult: com.viora.app.domain.model.OcrResult) {
 private fun QrDetectedDevBanner(detection: com.viora.app.presentation.scanner.QrDetection) {
     Surface(
         color = VioraPrimaryCyan.copy(alpha = 0.15f),
-        shape = RoundedCornerShape(10.dp),
+        shape = RoundedCornerShape(VioraRadius.sm),
         border = androidx.compose.foundation.BorderStroke(1.dp, VioraPrimaryCyan),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
+        Column(modifier = Modifier.padding(VioraSpacing.md)) {
             Text(
                 text = "QR DETECTED",
                 color = VioraPrimaryCyan,
@@ -290,14 +283,7 @@ private fun CameraPermissionDenied(
                 fontSize = 14.sp,
                 textAlign = TextAlign.Center
             )
-            Button(
-                onClick = onRequestPermission,
-                colors = ButtonDefaults.buttonColors(containerColor = VioraPrimaryCyan, contentColor = Color.Black),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(text = "Grant camera access", fontWeight = FontWeight.Bold)
-            }
+            PrimaryActionButton(text = "Grant camera access", onClick = onRequestPermission)
         }
     }
 }

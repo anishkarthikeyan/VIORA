@@ -12,6 +12,7 @@ import com.viora.app.ai.GuardianAI
 import com.viora.app.ai.ThreatEngine
 import com.viora.app.domain.history.NoOpThreatHistoryRepository
 import com.viora.app.domain.history.ThreatHistoryRepository
+import com.viora.app.domain.history.securityEventSignature
 import com.viora.app.domain.model.InputType
 import com.viora.app.domain.model.VioraContext
 import com.viora.app.domain.fusion.ContextFusionEngine
@@ -84,18 +85,20 @@ class ScannerViewModel(
     private var lastQrContext: VioraContext? = null
     private var lastOcrResult: OcrResult? = null
 
+    // Phase 7: OCR re-fires every ~2s while the camera holds steady on the same
+    // QR + scene (OcrFrameAnalyzer has no content dedup of its own), which would
+    // otherwise re-run refreshAnalysis() and re-persist an unchanged assessment
+    // every pass. Track the signature of the last RECORDED event so one continuous
+    // "look" at the same content becomes exactly one history entry.
+    private var lastRecordedSignature: String? = null
+
     /** Called by the camera pipeline whenever a new QR/barcode is detected. */
     fun onQrDetected(rawContent: String, formatName: String) {
         // Extraction only — safety evaluation happens in GuardianAI below.
         val parseResult = upiParser.parse(rawContent)
         Log.d(TAG, "QR detected [$formatName]: $rawContent -> $parseResult")
 
-        val parsedContext: VioraContext? = when (parseResult) {
-            is UpiParseResult.UpiPayment -> parseResult.context
-            is UpiParseResult.Url -> parseResult.context
-            is UpiParseResult.Text -> parseResult.context
-            is UpiParseResult.MalformedUpi -> null
-        }
+        val parsedContext: VioraContext? = parseResult.toVioraContextOrNull()
 
         _uiState.update {
             it.copy(
@@ -145,13 +148,48 @@ class ScannerViewModel(
 
         _uiState.update { it.copy(isLoading = true, resultContext = fusedContext) }
         viewModelScope.launch {
-            val assessment = guardianAI.analyze(fusedContext, ThreatAssessment.neutral())
+            val assessment = safeAnalyze(fusedContext)
+            if (assessment == null) {
+                // Analysis failed unexpectedly: fail gracefully, keep whatever was
+                // shown before rather than crashing or fabricating a result.
+                _uiState.update { it.copy(isLoading = false) }
+                return@launch
+            }
             // A fresh assessment re-shows the overlay, even if it was dismissed before.
             _uiState.update {
                 it.copy(assessment = assessment, isLoading = false, showOverlay = true)
             }
-            historyRepository.record(fusedContext, assessment)
+            recordIfNew(fusedContext, assessment)
         }
+    }
+
+    /**
+     * Runs GuardianAI defensively: every current engine is deterministic
+     * regex/arithmetic with no expected failure mode, but a scan must never crash
+     * the app on an unexpected exception. Returns null on failure so callers can
+     * degrade gracefully instead of showing a fabricated result.
+     */
+    private suspend fun safeAnalyze(context: VioraContext): ThreatAssessment? =
+        try {
+            guardianAI.analyze(context, ThreatAssessment.neutral())
+        } catch (e: Exception) {
+            Log.e(TAG, "Analysis failed: ${e.javaClass.simpleName}", e)
+            null
+        }
+
+    /**
+     * Persists exactly once per distinct security event. A "distinct event" is
+     * identified by the identifying context fields plus the resulting risk/signals —
+     * NOT by wall-clock time — so repeated re-analysis of the same unchanged QR/scene
+     * (see [lastRecordedSignature]) or an identical repeat share doesn't flood History
+     * with duplicates of one event. A genuinely different context/outcome always
+     * records, even within the same app session.
+     */
+    private suspend fun recordIfNew(context: VioraContext, assessment: ThreatAssessment) {
+        val signature = securityEventSignature(context, assessment)
+        if (signature == lastRecordedSignature) return
+        lastRecordedSignature = signature
+        historyRepository.record(context, assessment)
     }
 
     /** User dismissed the overlay; the camera stays live and analysis continues. */
@@ -186,11 +224,15 @@ class ScannerViewModel(
                     )
                 }
                 viewModelScope.launch {
-                    val assessment = guardianAI.analyze(context, ThreatAssessment.neutral())
+                    val assessment = safeAnalyze(context)
+                    if (assessment == null) {
+                        _uiState.update { it.copy(isLoading = false) }
+                        return@launch
+                    }
                     _uiState.update {
                         it.copy(assessment = assessment, isLoading = false, showOverlay = true)
                     }
-                    historyRepository.record(context, assessment)
+                    recordIfNew(context, assessment)
                 }
                 true
             }
@@ -207,13 +249,14 @@ class ScannerViewModel(
     suspend fun onSharedImage(uri: Uri, resolver: ContentResolver): Boolean {
         _uiState.update { it.copy(isLoading = true) }
 
-        val ocr = withContext(Dispatchers.IO) { sharedImageProcessor.process(uri, resolver) }
+        val imageResult = withContext(Dispatchers.IO) { sharedImageProcessor.process(uri, resolver) }
 
-        if (ocr == null) {
+        if (imageResult == null) {
             Log.w(TAG, "Shared image could not be decoded — ignoring")
             _uiState.update { it.copy(isLoading = false) }
             return false
         }
+        val ocr = imageResult.ocr
         if (ocr.isEmpty) {
             Log.w(TAG, "Shared image contained no readable text — ignoring")
             _uiState.update { it.copy(isLoading = false) }
@@ -222,9 +265,24 @@ class ScannerViewModel(
 
         Log.d(TAG, "Shared-image OCR [${ocr.lineCount} lines]: ${ocr.rawText.take(120)}")
 
-        // Fuse through the same engine as the camera path so merchant/amount
-        // extraction heuristics apply identically to screenshot content.
-        val fusedContext = fusionEngine.fuse(listOf(FusionInput.SceneText(ocr)))
+        // If the screenshot also contains a QR (e.g. a UPI payment QR alongside
+        // its visible text), decode it through the SAME UpiParser the live
+        // camera scan uses, so the structured payload (pa/pn/am/...) becomes
+        // available for fusion — not just what OCR could read off the screen.
+        val qrContext: VioraContext? = imageResult.qrRawContent?.let { raw ->
+            Log.d(TAG, "Shared-image QR detected: $raw")
+            upiParser.parse(raw).toVioraContextOrNull()
+        }
+
+        // Fuse through the same engine as the camera path — QR payload first,
+        // then scene text, mirroring refreshAnalysis()'s ordering exactly — so
+        // merchant/amount/recipient-id mismatch detection applies identically
+        // to screenshot content as it does to a live scan.
+        val fusionInputs = buildList {
+            qrContext?.let { add(FusionInput.Parsed(it)) }
+            add(FusionInput.SceneText(ocr))
+        }
+        val fusedContext = fusionEngine.fuse(fusionInputs)
             .copy(inputType = InputType.IMAGE, rawContent = ocr.rawText)
 
         // Also surface URLs that appear inside the screenshot text (shared extractor).
@@ -246,12 +304,29 @@ class ScannerViewModel(
             )
         }
 
-        val assessment = guardianAI.analyze(contextWithUrls, ThreatAssessment.neutral())
+        val assessment = safeAnalyze(contextWithUrls)
+        if (assessment == null) {
+            _uiState.update { it.copy(isLoading = false) }
+            return true
+        }
         _uiState.update {
             it.copy(assessment = assessment, isLoading = false, showOverlay = true)
         }
-        historyRepository.record(contextWithUrls, assessment)
+        recordIfNew(contextWithUrls, assessment)
         return true
+    }
+
+    /**
+     * Every [UpiParseResult] except a malformed UPI URI carries a usable
+     * [VioraContext] (payment payload, plain URL, or plain text — see
+     * [UpiParser]). Shared by the live camera path ([onQrDetected]) and the
+     * Screenshot QR path ([onSharedImage]) so both extract identically.
+     */
+    private fun UpiParseResult.toVioraContextOrNull(): VioraContext? = when (this) {
+        is UpiParseResult.UpiPayment -> context
+        is UpiParseResult.Url -> context
+        is UpiParseResult.Text -> context
+        is UpiParseResult.MalformedUpi -> null
     }
 
     override fun onCleared() {

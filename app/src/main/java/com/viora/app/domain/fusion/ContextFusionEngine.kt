@@ -50,12 +50,14 @@ class ContextFusionEngine {
         val lines = ocr.rawText.lines().map { it.trim() }.filter { it.isNotEmpty() }
         val merchant = visibleMerchantFrom(lines)
         val amount = displayedAmountFrom(lines)
+        val upiId = visibleUpiIdFrom(lines)
 
         return fused.copy(
             extractedText = fused.extractedText ?: ocr.rawText,
             // OCR-only fields; never collide with QR-derived values.
             visibleMerchant = fused.visibleMerchant ?: merchant,
-            displayedAmount = fused.displayedAmount ?: amount
+            displayedAmount = fused.displayedAmount ?: amount,
+            visibleUpiId = fused.visibleUpiId ?: upiId
         )
     }
 
@@ -83,6 +85,16 @@ class ContextFusionEngine {
 
     private fun normalizeAmount(raw: String): String = raw.replace(",", "")
 
+    /**
+     * First UPI-ID-shaped token in the scene, e.g. "nied.foundation@ybl". A UPI
+     * VPA is syntactically identical to an email address (handle@psp) — this is
+     * a best-effort heuristic, same conservative spirit as [visibleMerchantFrom]/
+     * [displayedAmountFrom]; an unrelated visible email would be misread as a
+     * UPI ID. There is no reliable way to distinguish the two from text alone.
+     */
+    private fun visibleUpiIdFrom(lines: List<String>): String? =
+        lines.firstNotNullOfOrNull { UPI_ID_REGEX.find(it)?.value }
+
     companion object {
         private val CURRENCY_AMOUNT_REGEX =
             Regex("(?:₹|rs\\.?|inr)\\s*([\\d,]+(?:\\.\\d+)?)", RegexOption.IGNORE_CASE)
@@ -97,5 +109,7 @@ class ContextFusionEngine {
         )
 
         private const val MIN_MERCHANT_LINE_LENGTH = 3
+
+        private val UPI_ID_REGEX = Regex("[a-zA-Z0-9.\\-_]{2,}@[a-zA-Z]{2,}")
     }
 }

@@ -8,12 +8,14 @@ import com.viora.app.domain.threat.ThreatSignal
 /**
  * Deterministic threat engine, v1.
  *
- * Implements exactly three explainable signals derived from the fused
+ * Implements exactly four explainable signals derived from the fused
  * [VioraContext]:
  *
- *  1. AMOUNT_MISMATCH   — the amount shown on screen differs from the payment payload.
- *  2. MERCHANT_MISMATCH — the visible merchant name does not match the payload's pn.
- *  3. UNKNOWN_RECIPIENT — a payment is requested but the recipient identity cannot
+ *  1. AMOUNT_MISMATCH        — the amount shown on screen differs from the payment payload.
+ *  2. MERCHANT_MISMATCH      — the visible merchant name does not match the payload's pn.
+ *  3. RECIPIENT_ID_MISMATCH  — the visible UPI ID does not match the payload's pa
+ *     (Screenshot input only — see ContextFusionEngine.visibleUpiId).
+ *  4. UNKNOWN_RECIPIENT — a payment is requested but the recipient identity cannot
  *     be verified. IMPORTANT: an unknown UPI ID is NOT fraud by itself; this signal
  *     only asks the user to verify, it never claims a scam.
  *
@@ -30,6 +32,7 @@ class ThreatEngine : GuardianAI {
 
         checkAmountMismatch(context, signals)
         checkMerchantMismatch(context, signals)
+        checkRecipientIdMismatch(context, signals)
         checkUnknownRecipient(context, signals)
 
         val totalScore = signals.sumOf { it.score }.coerceIn(0, 100)
@@ -83,6 +86,32 @@ class ThreatEngine : GuardianAI {
                 description =
                     "Merchant name mismatch: scene shows \"$visible\" but the payment " +
                         "payload claims \"$claimed\"."
+            )
+        }
+    }
+
+    /**
+     * Visible UPI ID (payment address) does not match the QR/payload's `pa`.
+     * Unlike a merchant NAME (fuzzy/organizational, compared via [namesRelate]),
+     * a UPI ID is an exact routing identifier — money literally goes wherever it
+     * points — so an exact-string mismatch here is meaningful on its own,
+     * independent of whether the merchant name also matches. Screenshot input is
+     * the primary source for this: [context.visibleUpiId] is OCR-only (see
+     * ContextFusionEngine), so this signal is inert for inputs that never
+     * observe a visible UPI ID (e.g. plain shared text).
+     */
+    private fun checkRecipientIdMismatch(context: VioraContext, signals: MutableList<ThreatSignal>) {
+        val visible = context.visibleUpiId
+        val claimed = context.upiId
+
+        if (visible != null && claimed != null && !visible.equals(claimed, ignoreCase = true)) {
+            signals += ThreatSignal(
+                id = "RECIPIENT_ID_MISMATCH",
+                score = 25,
+                severity = RiskLevel.SUSPICIOUS,
+                description =
+                    "Recipient identifier mismatch: scene shows UPI ID \"$visible\" but the " +
+                        "payment payload uses \"$claimed\"."
             )
         }
     }

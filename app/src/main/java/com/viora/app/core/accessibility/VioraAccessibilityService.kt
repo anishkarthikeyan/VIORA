@@ -10,10 +10,15 @@ import com.viora.app.BuildConfig
 import com.viora.app.ai.AccessibilityThreatAnalyzer
 import com.viora.app.ai.CompositeGuardianAI
 import com.viora.app.ai.GuardianAI
+import com.viora.app.ai.MLGuardianAI
 import com.viora.app.ai.ThreatEngine
+import com.viora.app.ai.ml.LocalThreatClassifier
 import com.viora.app.core.overlay.VioraOverlayService
 import com.viora.app.core.overlay.VioraRiskLevel
 import com.viora.app.core.overlay.VioraWarning
+import com.viora.app.data.history.ThreatHistoryRepositoryImpl
+import com.viora.app.data.history.VioraDatabase
+import com.viora.app.domain.history.ThreatHistoryRepository
 import com.viora.app.domain.model.InputType
 import com.viora.app.domain.model.VioraContext
 import com.viora.app.domain.perception.AccessibilitySnapshot
@@ -24,12 +29,36 @@ import kotlinx.coroutines.runBlocking
 /** Collects structured text from the active accessibility tree for the perception layer. */
 class VioraAccessibilityService : AccessibilityService() {
 
-    private val guardianAI: GuardianAI = CompositeGuardianAI(ThreatEngine(), AccessibilityThreatAnalyzer())
+    // Phase 8: adds MLGuardianAI (on-device text classifier) alongside the
+    // deterministic engines. `by lazy` because MLGuardianAI needs
+    // applicationContext to load its model asset, which isn't safely
+    // available until the service is attached (same reason historyRepository
+    // below is lazy).
+    private val guardianAI: GuardianAI by lazy {
+        CompositeGuardianAI(
+            ThreatEngine(),
+            AccessibilityThreatAnalyzer(),
+            MLGuardianAI(LocalThreatClassifier(applicationContext))
+        )
+    }
+
+    /** Same Room-backed history store ScannerViewModel uses — one shared record, no duplicate scoring. */
+    private val historyRepository: ThreatHistoryRepository by lazy {
+        ThreatHistoryRepositoryImpl(VioraDatabase.getInstance(applicationContext).threatHistoryDao())
+    }
+
     private val handler = Handler(Looper.getMainLooper())
     private var lastSnapshotPackage: String? = null
     private var lastSnapshotHash: Int? = null
     private var pendingSnapshot: AccessibilitySnapshot? = null
-    private var lastWarningKey: String? = null
+
+    // Phase 7: identifies the last (package, risk, signals) combination we already
+    // reacted to — gates BOTH history persistence and the overlay. The debounce
+    // above re-triggers analysis on every visible-text change, which can happen
+    // many times for one lingering screen (a ticking timestamp, a blinking
+    // cursor); without this, each re-analysis would re-persist and previously
+    // could re-consider showing the overlay for what is really one single event.
+    private var lastEventKey: String? = null
     private val analyzePendingSnapshot = Runnable { analyzePendingSnapshot() }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -37,7 +66,9 @@ class VioraAccessibilityService : AccessibilityService() {
         val packageName = root.packageName?.toString()
             ?: event?.packageName?.toString()
             ?: return
-        if (shouldIgnorePackage(packageName)) return
+        // Phase 5: only run analysis on contexts where payment fraud/social-engineering
+        // actually happens — payment/banking apps and common messaging/email apps.
+        if (!AccessibilityRelevanceFilter.isRelevant(packageName, packageNameOfApplication)) return
 
         val visibleText = collectVisibleText(root)
         if (visibleText.isEmpty()) return
@@ -77,10 +108,7 @@ class VioraAccessibilityService : AccessibilityService() {
             rawContent = snapshot.visibleText,
             extractedText = snapshot.visibleText
         )
-        // GuardianAI.analyze is suspend, but every current engine is synchronous
-        // (regex/arithmetic only, no real suspension point), so this call returns
-        // immediately without blocking the handler thread.
-        val assessment = runBlocking { guardianAI.analyze(context, ThreatAssessment.neutral()) }
+        val assessment = safeAnalyze(context) ?: return
         val confidence = confidenceFor(assessment)
         if (BuildConfig.DEBUG) {
             Log.d(
@@ -91,15 +119,21 @@ class VioraAccessibilityService : AccessibilityService() {
             )
         }
 
-        if (assessment.riskLevel == RiskLevel.SAFE) {
-            lastWarningKey = null
+        if (!AccessibilityWarningPolicy.shouldRecord(assessment.riskLevel)) {
+            lastEventKey = null
             return
         }
-        val warningKey = "${snapshot.packageName}|${assessment.riskLevel}|" +
-            assessment.signals.joinToString(",") { it.id }
-        if (warningKey == lastWarningKey) return
 
-        lastWarningKey = warningKey
+        val eventKey = accessibilityEventSignature(snapshot.packageName, assessment)
+        if (eventKey == lastEventKey) return
+        lastEventKey = eventKey
+
+        // Anything above SAFE is worth keeping in history (nothing silently dropped),
+        // even if it isn't strong enough to interrupt the user — see recordToHistory().
+        recordToHistory(context, assessment)
+
+        if (!AccessibilityWarningPolicy.shouldWarn(assessment.riskLevel)) return
+
         runCatching {
             VioraOverlayService.showWarning(
                 this,
@@ -111,6 +145,33 @@ class VioraAccessibilityService : AccessibilityService() {
             )
         }.onFailure {
             if (BuildConfig.DEBUG) Log.d(TAG, "Unable to show overlay: ${it.javaClass.simpleName}")
+        }
+    }
+
+    /**
+     * Runs GuardianAI defensively: every current engine is deterministic
+     * regex/arithmetic with no expected failure mode, but an analysis failure must
+     * never crash the accessibility service — that would silently disable
+     * background protection until the user manually re-enables it, a far worse
+     * outcome than skipping one screen's analysis.
+     */
+    private fun safeAnalyze(context: VioraContext): ThreatAssessment? =
+        try {
+            // GuardianAI.analyze is suspend, but every current engine is synchronous
+            // (regex/arithmetic only, no real suspension point), so this call returns
+            // immediately without blocking the handler thread.
+            runBlocking { guardianAI.analyze(context, ThreatAssessment.neutral()) }
+        } catch (e: Exception) {
+            if (BuildConfig.DEBUG) Log.e(TAG, "Analysis failed: ${e.javaClass.simpleName}", e)
+            null
+        }
+
+    /** Best-effort persistence — a database failure must never break protection. */
+    private fun recordToHistory(context: VioraContext, assessment: ThreatAssessment) {
+        runCatching {
+            runBlocking { historyRepository.record(context, assessment) }
+        }.onFailure {
+            if (BuildConfig.DEBUG) Log.d(TAG, "Unable to record history: ${it.javaClass.simpleName}")
         }
     }
 
@@ -131,12 +192,6 @@ class VioraAccessibilityService : AccessibilityService() {
     private fun confidenceFor(assessment: com.viora.app.domain.threat.ThreatAssessment): String =
         (assessment.signals.size / SIGNALS_FOR_FULL_CONFIDENCE.toFloat()).coerceAtMost(1f)
             .let { "%.2f".format(java.util.Locale.US, it) }
-
-    private fun shouldIgnorePackage(packageName: String): Boolean =
-        packageName == packageNameOfApplication ||
-            packageName == ANDROID_SYSTEM_UI ||
-            packageName.startsWith(ANDROID_LAUNCHER_PREFIX) ||
-            packageName.startsWith(GOOGLE_LAUNCHER_PREFIX)
 
     private fun collectVisibleText(root: AccessibilityNodeInfo): String {
         val values = LinkedHashSet<String>()
@@ -166,9 +221,6 @@ class VioraAccessibilityService : AccessibilityService() {
         private const val TAG = "VioraAccessibility"
         private const val ANALYSIS_DEBOUNCE_MS = 400L
         private const val SIGNALS_FOR_FULL_CONFIDENCE = 3
-        private const val ANDROID_SYSTEM_UI = "com.android.systemui"
-        private const val ANDROID_LAUNCHER_PREFIX = "com.android.launcher"
-        private const val GOOGLE_LAUNCHER_PREFIX = "com.google.android.apps.nexuslauncher"
         private val WHITESPACE_REGEX = Regex("\\s+")
     }
 

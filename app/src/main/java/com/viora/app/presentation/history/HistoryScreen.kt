@@ -1,25 +1,15 @@
 package com.viora.app.presentation.history
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -28,21 +18,22 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.viora.app.domain.history.ThreatHistoryRecord
-import com.viora.app.domain.threat.RiskLevel
-import com.viora.app.presentation.components.RiskDangerousColor
-import com.viora.app.presentation.components.RiskSafeColor
-import com.viora.app.presentation.components.RiskSuspiciousColor
-import com.viora.app.presentation.components.RiskVerifyColor
+import com.viora.app.presentation.components.RiskBadge
+import com.viora.app.presentation.components.SecondaryActionButton
+import com.viora.app.presentation.components.color
+import com.viora.app.presentation.components.VioraCard
 import com.viora.app.presentation.components.VioraDarkBackground
-import com.viora.app.presentation.components.VioraDarkSurface
+import com.viora.app.presentation.components.VioraEmptyState
 import com.viora.app.presentation.components.VioraPrimaryCyan
+import com.viora.app.presentation.components.VioraSpacing
+import com.viora.app.presentation.components.signalLabel
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/** Real Room-backed security-check history (Phase 3 data, Phase 6 presentation). */
 @Composable
 fun HistoryScreen(
     history: List<ThreatHistoryRecord> = emptyList(),
@@ -55,26 +46,41 @@ fun HistoryScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(24.dp)
+                .padding(VioraSpacing.xl)
         ) {
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(VioraSpacing.sm))
 
             Text(
                 text = "CHECK HISTORY",
                 color = VioraPrimaryCyan,
-                fontSize = 20.sp,
+                fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
-                letterSpacing = 1.sp
+                letterSpacing = 1.5.sp
+            )
+            Spacer(modifier = Modifier.height(VioraSpacing.xs))
+            Text(
+                text = if (history.isEmpty()) {
+                    "Every scan and background check Viora completes appears here."
+                } else {
+                    "${history.size} check${if (history.size == 1) "" else "s"}, newest first."
+                },
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 13.sp
             )
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(VioraSpacing.lg))
 
             if (history.isEmpty()) {
-                EmptyHistoryCard(modifier = Modifier.weight(1f))
+                VioraEmptyState(
+                    title = "No checks yet",
+                    subtitle = "Scan a payment QR, share a suspicious message, or let " +
+                        "background protection run — every completed check is stored here, on-device only.",
+                    modifier = Modifier.weight(1f)
+                )
             } else {
                 LazyColumn(
                     modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    verticalArrangement = Arrangement.spacedBy(VioraSpacing.md)
                 ) {
                     items(history, key = { it.id }) { record ->
                         HistoryEntryCard(record)
@@ -82,90 +88,61 @@ fun HistoryScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(VioraSpacing.lg))
 
-            Button(
-                onClick = onBackClick,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(50.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = VioraPrimaryCyan, contentColor = Color.Black),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Text(text = "Back to Home", fontWeight = FontWeight.Bold)
-            }
-        }
-    }
-}
-
-@Composable
-private fun EmptyHistoryCard(modifier: Modifier = Modifier) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = VioraDarkSurface),
-        shape = RoundedCornerShape(16.dp)
-    ) {
-        Column(modifier = Modifier.padding(20.dp)) {
-            Text(
-                text = "No checks yet",
-                color = Color.White,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "Past scans and safety checks will be stored and viewable here.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 14.sp
-            )
+            SecondaryActionButton(text = "Back to Home", onClick = onBackClick)
         }
     }
 }
 
 @Composable
 private fun HistoryEntryCard(record: ThreatHistoryRecord) {
-    val riskColor = record.riskLevel.color()
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = VioraDarkSurface),
-        shape = RoundedCornerShape(16.dp)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(10.dp)
-                        .background(riskColor, CircleShape)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = record.riskLevel.name,
-                    color = riskColor,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f)
-                )
-                Text(
-                    text = formatTimestamp(record.timestamp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 12.sp
-                )
-            }
-            Spacer(modifier = Modifier.height(8.dp))
+    VioraCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RiskBadge(riskLevel = record.riskLevel, modifier = Modifier.weight(1f))
             Text(
-                text = record.explanation,
-                color = Color.White.copy(alpha = 0.9f),
-                fontSize = 14.sp,
-                lineHeight = 20.sp
+                text = formatTimestamp(record.timestamp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 12.sp
             )
-            (record.merchantName ?: record.upiId)?.let { recipient ->
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = "Recipient: $recipient",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 12.sp
-                )
+        }
+
+        Spacer(modifier = Modifier.height(VioraSpacing.sm))
+
+        Text(
+            text = record.explanation,
+            color = Color.White.copy(alpha = 0.92f),
+            fontSize = 14.sp,
+            lineHeight = 20.sp
+        )
+
+        val topSignal = record.signals.maxByOrNull { it.score }
+        val recipient = record.merchantName ?: record.upiId
+        if (topSignal != null || recipient != null) {
+            Spacer(modifier = Modifier.height(VioraSpacing.sm))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                topSignal?.let {
+                    Text(
+                        text = signalLabel(it.id),
+                        color = record.riskLevel.color(),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                }
+                if (topSignal != null && recipient != null) {
+                    Spacer(modifier = Modifier.width(VioraSpacing.sm))
+                    Text(text = "•", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                    Spacer(modifier = Modifier.width(VioraSpacing.sm))
+                }
+                recipient?.let {
+                    Text(
+                        text = it,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp,
+                        maxLines = 1
+                    )
+                }
             }
         }
     }
@@ -173,10 +150,3 @@ private fun HistoryEntryCard(record: ThreatHistoryRecord) {
 
 private fun formatTimestamp(epochMillis: Long): String =
     SimpleDateFormat("MMM d, HH:mm", Locale.US).format(Date(epochMillis))
-
-private fun RiskLevel.color(): Color = when (this) {
-    RiskLevel.SAFE -> RiskSafeColor
-    RiskLevel.VERIFY -> RiskVerifyColor
-    RiskLevel.SUSPICIOUS -> RiskSuspiciousColor
-    RiskLevel.DANGEROUS -> RiskDangerousColor
-}

@@ -23,7 +23,8 @@ class ThreatEngineTest {
         merchantName: String? = null,
         amount: String? = null,
         visibleMerchant: String? = null,
-        displayedAmount: String? = null
+        displayedAmount: String? = null,
+        visibleUpiId: String? = null
     ) = VioraContext(
         inputType = InputType.CAMERA,
         rawContent = "fused",
@@ -31,7 +32,8 @@ class ThreatEngineTest {
         merchantName = merchantName,
         amount = amount,
         visibleMerchant = visibleMerchant,
-        displayedAmount = displayedAmount
+        displayedAmount = displayedAmount,
+        visibleUpiId = visibleUpiId
     )
 
     // ---------- Clean cases ----------
@@ -150,6 +152,54 @@ class ThreatEngineTest {
         )
 
         assertTrue(result.signals.none { it.id == "MERCHANT_MISMATCH" })
+    }
+
+    // ---------- RECIPIENT_ID_MISMATCH (Screenshot QR cross-check fix) ----------
+
+    @Test
+    fun `visible UPI ID differing from QR pa raises RECIPIENT_ID_MISMATCH`() {
+        val result = analyze(
+            context(
+                upiId = "attacker@upi",
+                merchantName = "Trusted Shop",
+                visibleUpiId = "real.shop@ybl"
+            )
+        )
+
+        val signal = result.signals.single { it.id == "RECIPIENT_ID_MISMATCH" }
+        assertEquals(25, signal.score)
+        assertTrue(signal.description.contains("real.shop@ybl"))
+        assertTrue(signal.description.contains("attacker@upi"))
+        assertEquals(RiskLevel.VERIFY, result.riskLevel) // conservative: 25 -> VERIFY, not "scam"
+    }
+
+    @Test
+    fun `matching visible UPI ID and QR pa is not a false mismatch`() {
+        val result = analyze(
+            context(
+                upiId = "nied.foundation@ybl",
+                merchantName = "Dr DHANRAJ",
+                visibleUpiId = "nied.foundation@ybl"
+            )
+        )
+
+        assertTrue(result.signals.none { it.id == "RECIPIENT_ID_MISMATCH" })
+    }
+
+    @Test
+    fun `matching visible UPI ID ignores case`() {
+        val result = analyze(
+            context(upiId = "Name@YBL", visibleUpiId = "name@ybl", merchantName = "Name")
+        )
+
+        assertTrue(result.signals.none { it.id == "RECIPIENT_ID_MISMATCH" })
+    }
+
+    @Test
+    fun `no visible UPI ID observed does not raise a mismatch`() {
+        val result = analyze(context(upiId = "a@b", merchantName = "A"))
+
+        assertTrue(result.signals.none { it.id == "RECIPIENT_ID_MISMATCH" })
     }
 
     // ---------- UNKNOWN_RECIPIENT ----------

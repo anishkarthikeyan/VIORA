@@ -14,5 +14,7 @@ data class VioraContext(
     /** Merchant name as visibly rendered in the scene (OCR). Kept separate from the QR's pn. */
     val visibleMerchant: String? = null,
     /** Amount as visibly displayed in the scene (OCR). Kept separate from the QR's am. */
-    val displayedAmount: String? = null
+    val displayedAmount: String? = null,
+    /** UPI ID (payment address) as visibly rendered in the scene (OCR). Kept separate from the QR's pa. */
+    val visibleUpiId: String? = null
 )

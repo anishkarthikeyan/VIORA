@@ -146,4 +146,52 @@ class ContextFusionEngineTest {
         assertEquals("12500", fused.displayedAmount)
         assertEquals("BIG STORES", fused.visibleMerchant)
     }
+
+    // ---------- Visible UPI ID (Screenshot QR cross-check fix) ----------
+
+    @Test
+    fun `ocr extracts a visible UPI ID separately from the QR payload's pa`() {
+        val qr = FusionInput.Parsed(
+            com.viora.app.domain.model.VioraContext(
+                inputType = com.viora.app.domain.model.InputType.QR,
+                rawContent = "upi://pay?pa=nied.foundation@ybl&pn=Dr%20DHANRAJ",
+                upiId = "nied.foundation@ybl",
+                merchantName = "Dr DHANRAJ"
+            )
+        )
+        val scene = FusionInput.SceneText(
+            ocr("ALL UPI ACCEPTED\nNEXTGEN INDIA\nEDUCATIONAL DEVELOPMENT COUNCIL\nnied.foundation@ybl")
+        )
+
+        val fused = engine.fuse(listOf(qr, scene))
+
+        assertEquals("nied.foundation@ybl", fused.upiId) // from QR
+        assertEquals("nied.foundation@ybl", fused.visibleUpiId) // from OCR — same value, independent field
+        assertEquals("Dr DHANRAJ", fused.merchantName)
+        assertEquals("NEXTGEN INDIA", fused.visibleMerchant)
+    }
+
+    @Test
+    fun `discrepant visible UPI ID is kept separately not merged into QR pa`() {
+        val qr = FusionInput.Parsed(
+            com.viora.app.domain.model.VioraContext(
+                inputType = com.viora.app.domain.model.InputType.QR,
+                rawContent = "upi://pay?pa=attacker@upi",
+                upiId = "attacker@upi"
+            )
+        )
+        val scene = FusionInput.SceneText(ocr("Trusted Shop\nreal.shop@ybl"))
+
+        val fused = engine.fuse(listOf(qr, scene))
+
+        assertEquals("attacker@upi", fused.upiId)          // what the payload actually pays
+        assertEquals("real.shop@ybl", fused.visibleUpiId)  // what the screen shows
+    }
+
+    @Test
+    fun `no UPI-ID-shaped token in the scene leaves visibleUpiId null`() {
+        val fused = engine.fuse(listOf(FusionInput.SceneText(ocr("ABC RESTAURANT\n₹850"))))
+
+        assertNull(fused.visibleUpiId)
+    }
 }

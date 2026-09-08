@@ -1,34 +1,55 @@
 package com.viora.app.presentation.home
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.viora.app.domain.history.NoOpThreatHistoryRepository
+import com.viora.app.domain.history.ThreatHistoryRecord
+import com.viora.app.domain.history.ThreatHistoryRepository
 import com.viora.app.domain.threat.RiskLevel
-import com.viora.app.presentation.components.RiskSafeColor
-import com.viora.app.presentation.components.RiskSuspiciousColor
-import com.viora.app.presentation.components.RiskVerifyColor
-import androidx.compose.ui.graphics.Color
-import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 
 data class RecentCheckItem(
     val title: String,
     val subtitle: String,
-    val statusLabel: String,
-    val statusColor: Color,
     val riskLevel: RiskLevel
 )
 
 /**
- * Phase 1: mock data only. A real repository-backed history flow arrives in a later phase.
+ * Home's "Recent Checks" — the real, Room-backed history (Phase 3), most recent
+ * first, trimmed to a small preview. No mock/invented data: an empty repository
+ * simply yields an empty list, and HomeScreen renders that as an empty state.
  */
-class HomeViewModel : ViewModel() {
+class HomeViewModel(
+    repository: ThreatHistoryRepository = NoOpThreatHistoryRepository
+) : ViewModel() {
 
-    private val _recentChecks = MutableStateFlow(mockChecks())
-    val recentChecks: StateFlow<List<RecentCheckItem>> = _recentChecks.asStateFlow()
+    val recentChecks: StateFlow<List<RecentCheckItem>> = repository.observeHistory()
+        .map { history -> history.take(RECENT_PREVIEW_COUNT).map { it.toRecentCheckItem() } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), emptyList())
 
-    private fun mockChecks(): List<RecentCheckItem> = listOf(
-        RecentCheckItem("UPI QR Scan", "merchant@okicici (₹499)", "SAFE", RiskSafeColor, RiskLevel.SAFE),
-        RecentCheckItem("SMS Link", "bit.ly/secure-bank-login", "SUSPICIOUS", RiskSuspiciousColor, RiskLevel.SUSPICIOUS),
-        RecentCheckItem("Payment Link", "upi://pay?pa=store@upi", "VERIFY", RiskVerifyColor, RiskLevel.VERIFY)
-    )
+    private companion object {
+        const val RECENT_PREVIEW_COUNT = 4
+        const val STOP_TIMEOUT_MS = 5000L
+    }
+}
+
+private fun ThreatHistoryRecord.toRecentCheckItem(): RecentCheckItem = RecentCheckItem(
+    title = signalOrInputTitle(),
+    subtitle = (merchantName ?: upiId)?.let { recipient ->
+        amount?.let { "$recipient (${currency ?: "₹"}$it)" } ?: recipient
+    } ?: inputType.name,
+    riskLevel = riskLevel
+)
+
+/** First/highest signal name, or the input type when nothing specific fired. */
+private fun ThreatHistoryRecord.signalOrInputTitle(): String {
+    val topSignal = signals.maxByOrNull { it.score }
+    return when {
+        topSignal != null -> com.viora.app.presentation.components.signalLabel(topSignal.id)
+        riskLevel == RiskLevel.SAFE -> "No issues found"
+        else -> "Check completed"
+    }
 }

@@ -5,44 +5,82 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import com.google.mlkit.vision.common.InputImage
+import com.viora.app.core.camera.VioraBarcodeDecoder
 import com.viora.app.domain.model.OcrResult
 import kotlin.coroutines.resume
 import kotlinx.coroutines.suspendCancellableCoroutine
 
+/** Result of processing a shared/gallery image: OCR is required; a QR/barcode payload is optional. */
+data class SharedImageResult(
+    val ocr: OcrResult,
+    /** Raw content of the first detected barcode/QR in the image, or null if none was found. */
+    val qrRawContent: String?
+)
+
 /**
- * Share-Sheet image processor: shared image Uri → decoded bitmap → ML Kit OCR →
- * [OcrResult].
+ * Share-Sheet / gallery image processor: shared image Uri → decoded bitmap →
+ * [OcrResult] + optional QR/barcode payload.
  *
- * Reuses [VioraTextRecognizer] — no ML Kit logic is duplicated; this class only
- * owns Uri decoding/downscaling and suspending until recognition completes.
+ * Reuses [VioraTextRecognizer] and [VioraBarcodeDecoder] — no ML Kit logic is
+ * duplicated; this class only owns Uri decoding/downscaling and suspending
+ * until both recognizers complete. QR detection runs on the SAME decoded
+ * bitmap OCR already used, so a screenshot containing both a UPI QR and
+ * visible payment text yields both — mirroring what the live camera pipeline
+ * already does with two ChildFrameAnalyzers on one frame.
  *
- * No risk interpretation: the caller feeds the [OcrResult] into ContextFusionEngine.
+ * No risk interpretation: the caller feeds the result into UpiParser/
+ * ContextFusionEngine.
  */
 class SharedImageProcessor(
-    private val recognizer: VioraTextRecognizer = VioraTextRecognizer()
+    private val recognizer: VioraTextRecognizer = VioraTextRecognizer(),
+    private val barcodeDecoder: VioraBarcodeDecoder = VioraBarcodeDecoder()
 ) {
 
     /**
-     * Decodes and recognizes text in the shared image. Suspending so callers can
-     * run it off the main thread. Returns null when the image cannot be decoded
-     * (missing/corrupt stream) — callers degrade gracefully.
+     * Decodes the image, then runs OCR and QR detection on it. Returns null only
+     * when the image itself cannot be decoded/recognized (missing/corrupt
+     * stream, or OCR recognition failure) — callers degrade gracefully. QR
+     * detection is always best-effort: absence or failure to decode a barcode
+     * never fails the whole result, it just means [SharedImageResult.qrRawContent]
+     * is null.
      */
-    suspend fun process(uri: Uri, resolver: ContentResolver): OcrResult? {
+    suspend fun process(uri: Uri, resolver: ContentResolver): SharedImageResult? {
         val bitmap = decodeDownsampled(resolver, uri) ?: return null
         val inputImage = InputImage.fromBitmap(bitmap, 0)
 
-        return suspendCancellableCoroutine { continuation ->
+        val ocr = recognizeText(inputImage) ?: return null
+        val qrRawContent = detectQr(inputImage)
+
+        return SharedImageResult(ocr = ocr, qrRawContent = qrRawContent)
+    }
+
+    /** Releases the underlying ML Kit clients when no more images will arrive. */
+    fun close() {
+        recognizer.close()
+        barcodeDecoder.close()
+    }
+
+    private suspend fun recognizeText(image: InputImage): OcrResult? =
+        suspendCancellableCoroutine { continuation ->
             recognizer.recognize(
-                image = inputImage,
+                image = image,
                 onSuccess = { result -> continuation.resume(result) },
                 onFailure = { continuation.resume(null) }
             )
         }
-    }
 
-    /** Releases the underlying ML Kit recognizer when no more images will arrive. */
-    fun close() {
-        recognizer.close()
+    /** Best-effort: no barcode, an unreadable one, or a detector failure all yield null. */
+    private suspend fun detectQr(image: InputImage): String? = try {
+        suspendCancellableCoroutine { continuation ->
+            barcodeDecoder.process(image)
+                .addOnSuccessListener { barcodes ->
+                    val rawContent = barcodes.firstNotNullOfOrNull { it.rawValue?.takeIf(String::isNotEmpty) }
+                    continuation.resume(rawContent)
+                }
+                .addOnFailureListener { continuation.resume(null) }
+        }
+    } catch (e: Exception) {
+        null
     }
 
     /**
@@ -71,6 +109,7 @@ class SharedImageProcessor(
         /**
          * 4096 px cap: ML Kit needs text ~16-20 px tall; aggressive downsampling
          * of dense screenshots (bank SMS, payment apps) destroys small print.
+         * Also comfortably large enough for reliable QR detection.
          */
         private const val MAX_DIMENSION = 4096
     }

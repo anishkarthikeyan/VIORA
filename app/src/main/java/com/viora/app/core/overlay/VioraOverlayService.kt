@@ -12,6 +12,7 @@ import android.view.Gravity
 import android.view.WindowManager
 import android.widget.TextView
 import com.viora.app.BuildConfig
+import com.viora.app.MainActivity
 
 class VioraOverlayService : Service() {
 
@@ -56,9 +57,19 @@ class VioraOverlayService : Service() {
 
     fun showWarning(warning: VioraWarning) {
         removeWarning()
-        val view = VioraWarningOverlayView(this, warning, ::removeWarning, ::removeWarning)
+        // "View Details" and "Dismiss" are distinct actions: Dismiss only closes the
+        // overlay, View Details also brings Viora to the foreground so the user can
+        // review the full assessment (Home -> History) before deciding STOP/CONTINUE.
+        val view = VioraWarningOverlayView(this, warning, onViewDetails = ::openApp, onDismiss = ::removeWarning)
         warningView = view
         windowManager.addView(view, warningLayoutParams())
+    }
+
+    private fun openApp() {
+        removeWarning()
+        startActivity(
+            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
     }
 
     override fun onDestroy() {
