@@ -14,10 +14,13 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.viora.app.MainActivity
 import com.viora.app.presentation.history.HistoryScreen
+import com.viora.app.presentation.history.HistoryViewModel
+import com.viora.app.presentation.history.HistoryViewModelFactory
 import com.viora.app.presentation.home.HomeScreen
 import com.viora.app.presentation.result.ResultScreen
 import com.viora.app.presentation.scanner.ScannerScreen
 import com.viora.app.presentation.scanner.ScannerViewModel
+import com.viora.app.presentation.scanner.ScannerViewModelFactory
 import kotlinx.coroutines.flow.StateFlow
 
 @Composable
@@ -29,7 +32,10 @@ fun VioraNavigation(
     // One analysis pipeline shared by Scanner and Result so "View Details" can read
     // the same ThreatAssessment that drove the overlay.
     val activity = LocalContext.current as ComponentActivity
-    val scannerViewModel: ScannerViewModel = viewModel(viewModelStoreOwner = activity)
+    val scannerViewModel: ScannerViewModel = viewModel(
+        viewModelStoreOwner = activity,
+        factory = ScannerViewModelFactory(activity.applicationContext)
+    )
 
     // Share-intent pipeline: ACTION_SEND text → input processor → VioraContext →
     // ThreatEngine → Result. Navigates straight to the detailed view; the camera
@@ -104,7 +110,12 @@ fun VioraNavigation(
         }
 
         composable(NavRoute.History.route) {
+            val historyViewModel: HistoryViewModel = viewModel(
+                factory = HistoryViewModelFactory(activity.applicationContext)
+            )
+            val history by historyViewModel.history.collectAsStateWithLifecycle()
             HistoryScreen(
+                history = history,
                 onBackClick = { navController.popBackStack() }
             )
         }

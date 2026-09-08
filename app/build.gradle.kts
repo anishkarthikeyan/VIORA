@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.ksp)
 }
 
 android {
@@ -34,6 +35,15 @@ android {
         buildConfig = true
         compose = true
     }
+    testOptions {
+        unitTests {
+            // Local JVM unit tests run against the android.jar stub, whose methods
+            // (e.g. android.util.Log) throw by default when called. Persistence
+            // error-handling tests deliberately exercise a Log.w(...) call on the
+            // failure path, so return safe defaults instead of throwing.
+            isReturnDefaultValues = true
+        }
+    }
 }
 
 dependencies {
@@ -54,6 +64,8 @@ dependencies {
     implementation(libs.androidx.camera.view)
     implementation(libs.mlkit.barcode.scanning)
     implementation(libs.mlkit.text.recognition)
+    implementation(libs.androidx.room.runtime)
+    ksp(libs.androidx.room.compiler)
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

@@ -10,6 +10,8 @@ import com.viora.app.ai.AccessibilityThreatAnalyzer
 import com.viora.app.ai.CompositeGuardianAI
 import com.viora.app.ai.GuardianAI
 import com.viora.app.ai.ThreatEngine
+import com.viora.app.domain.history.NoOpThreatHistoryRepository
+import com.viora.app.domain.history.ThreatHistoryRepository
 import com.viora.app.domain.model.InputType
 import com.viora.app.domain.model.VioraContext
 import com.viora.app.domain.fusion.ContextFusionEngine
@@ -68,7 +70,11 @@ class ScannerViewModel(
     private val upiParser: UpiParser = UpiParser(),
     private val fusionEngine: ContextFusionEngine = ContextFusionEngine(),
     private val shareProcessor: ShareInputProcessor = ShareInputProcessor(upiParser),
-    private val sharedImageProcessor: SharedImageProcessor = SharedImageProcessor()
+    private val sharedImageProcessor: SharedImageProcessor = SharedImageProcessor(),
+    /** Persists completed assessments for the History feature. Safe no-op by default
+     *  (e.g. tests/previews with no Context to open Room) — real wiring is supplied
+     *  by [ScannerViewModelFactory]. */
+    private val historyRepository: ThreatHistoryRepository = NoOpThreatHistoryRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ScannerUiState())
@@ -144,6 +150,7 @@ class ScannerViewModel(
             _uiState.update {
                 it.copy(assessment = assessment, isLoading = false, showOverlay = true)
             }
+            historyRepository.record(fusedContext, assessment)
         }
     }
 
@@ -183,6 +190,7 @@ class ScannerViewModel(
                     _uiState.update {
                         it.copy(assessment = assessment, isLoading = false, showOverlay = true)
                     }
+                    historyRepository.record(context, assessment)
                 }
                 true
             }
@@ -242,6 +250,7 @@ class ScannerViewModel(
         _uiState.update {
             it.copy(assessment = assessment, isLoading = false, showOverlay = true)
         }
+        historyRepository.record(contextWithUrls, assessment)
         return true
     }
 
